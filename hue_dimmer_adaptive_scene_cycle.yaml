@@ -12,10 +12,12 @@ blueprint:
     selected timeout passes between On-button presses, the next press restarts
     at Adaptive.
 
-    Returning to Adaptive uses the selected Adaptive Lighting instance's own
-    settings, including initial_transition and prefer_rgb_color. It intentionally
-    avoids calling adaptive_lighting.apply after clearing manual control, because
-    clearing manual control already reapplies Adaptive Lighting.
+    Returning to Adaptive clears manual control and then calls
+    adaptive_lighting.apply with turn_on_lights, so the current-time adaptive
+    state is applied immediately whether the room was off or already on. This is
+    deterministic and does not rely on a bare light.turn_on being intercepted in
+    time. The fade duration uses the Adaptive transition input; color mode still
+    follows the instance's own settings such as prefer_rgb_color.
 
     Brightness buttons end the cycle window and mark only brightness as manually
     controlled, allowing Adaptive Lighting to continue adapting color. Off ends
@@ -27,7 +29,8 @@ blueprint:
     Adaptive, Rest, Relax, Bright, Concentrate. Also create one Timer helper per room.
 
     Requires Adaptive Lighting with selective brightness/color manual control
-    support (Adaptive Lighting 1.30.0 or newer).
+    support (Adaptive Lighting 1.30.0 or newer) and take_over_control enabled on
+    each instance, which set_manual_control depends on.
   domain: automation
   author: OpenAI for Ralph
   homeassistant:
@@ -129,11 +132,12 @@ blueprint:
               mode: slider
 
         adaptive_transition:
-          name: Legacy adaptive transition — ignored
+          name: Adaptive transition
           description: >-
-            Kept only so existing automations made from v2 remain compatible.
-            Adaptive mode now uses the selected Adaptive Lighting instance's own
-            initial_transition setting.
+            Fade duration used when returning to Adaptive mode, whether the room
+            was off or already on. Set this to match your Adaptive Lighting
+            instance's initial_transition if you want the fade to feel identical
+            to a normal Adaptive Lighting turn-on.
           default: 1
           selector:
             number:
@@ -157,6 +161,7 @@ variables:
   bright_scene: !input bright_scene
   concentrate_scene: !input concentrate_scene
   cycle_timeout: !input cycle_timeout
+  adaptive_transition: !input adaptive_transition
 
 triggers:
   - trigger: device
@@ -231,8 +236,10 @@ actions:
                   - condition: template
                     value_template: "{{ is_state(mode_helper, 'Adaptive') }}"
                 sequence:
-                  # If the Adaptive Lighting instance was off, turning it on resets
-                  # manual control and adapts lights that are already on.
+                  # Make sure the Adaptive Lighting instance is running. The short
+                  # settle delay is applied only in this uncommon path (AL was
+                  # off) so the normal case stays fast. It gives AL a moment to
+                  # register before the apply call below.
                   - choose:
                       - conditions:
                           - condition: template
@@ -241,45 +248,29 @@ actions:
                           - action: switch.turn_on
                             target:
                               entity_id: "{{ adaptive_switch }}"
+                          - delay:
+                              milliseconds: 100
 
-                  # If the room was off, clear any stale manual state (when needed)
-                  # and use a bare turn-on. Adaptive Lighting intercepts it and
-                  # supplies this instance's own brightness, color, RGB preference,
-                  # and initial transition.
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ room_was_off }}"
-                        sequence:
-                          - choose:
-                              - conditions:
-                                  - condition: template
-                                    value_template: "{{ adaptive_was_on }}"
-                                sequence:
-                                  - action: adaptive_lighting.set_manual_control
-                                    data:
-                                      entity_id: "{{ adaptive_switch }}"
-                                      lights: "{{ [room_light] }}"
-                                      manual_control: false
+                  # Clear any manual-control flags left by a scene or a brightness
+                  # press so interval adaptation resumes afterward.
+                  - action: adaptive_lighting.set_manual_control
+                    data:
+                      entity_id: "{{ adaptive_switch }}"
+                      lights: "{{ [room_light] }}"
+                      manual_control: false
 
-                          - action: light.turn_on
-                            target:
-                              entity_id: "{{ room_light }}"
-
-                    # If the room was already on and Adaptive Lighting was already
-                    # enabled, clearing manual control itself immediately reapplies
-                    # the instance's current adaptive settings.
-                    default:
-                      - choose:
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ adaptive_was_on }}"
-                            sequence:
-                              - action: adaptive_lighting.set_manual_control
-                                data:
-                                  entity_id: "{{ adaptive_switch }}"
-                                  lights: "{{ [room_light] }}"
-                                  manual_control: false
+                  # Force the CURRENT-time adaptive state directly rather than
+                  # relying on a bare light.turn_on being intercepted in time.
+                  # turn_on_lights handles the room-was-off case; if the room is
+                  # already on this just re-adapts it. apply ignores the manual
+                  # flag, so the look is correct even if the clear above is still
+                  # settling. This is what stops the room coming on at a stale look.
+                  - action: adaptive_lighting.apply
+                    data:
+                      entity_id: "{{ adaptive_switch }}"
+                      lights: "{{ [room_light] }}"
+                      turn_on_lights: true
+                      transition: "{{ adaptive_transition | float(1) }}"
 
               - conditions:
                   - condition: template
