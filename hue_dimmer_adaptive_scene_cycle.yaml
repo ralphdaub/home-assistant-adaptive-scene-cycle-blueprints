@@ -205,6 +205,10 @@ actions:
               cycle_was_active: "{{ is_state(cycle_timer, 'active') }}"
               room_was_off: "{{ is_state(room_light, 'off') }}"
               adaptive_was_on: "{{ is_state(adaptive_switch, 'on') }}"
+              # Mode selected by the PREVIOUS press, captured before this press
+              # changes it. Used by the scene branches to mark manual control only
+              # when entering the scene system from Adaptive.
+              prev_mode: "{{ states(mode_helper) }}"
 
           - action: timer.start
             target:
@@ -251,20 +255,13 @@ actions:
                           - delay:
                               milliseconds: 100
 
-                  # Clear any manual-control flags left by a scene or a brightness
-                  # press so interval adaptation resumes afterward.
-                  - action: adaptive_lighting.set_manual_control
-                    data:
-                      entity_id: "{{ adaptive_switch }}"
-                      lights: "{{ [room_light] }}"
-                      manual_control: false
-
-                  # Force the CURRENT-time adaptive state directly rather than
-                  # relying on a bare light.turn_on being intercepted in time.
-                  # turn_on_lights handles the room-was-off case; if the room is
-                  # already on this just re-adapts it. apply ignores the manual
-                  # flag, so the look is correct even if the clear above is still
-                  # settling. This is what stops the room coming on at a stale look.
+                  # Apply the CURRENT-time adaptive state first so the change is
+                  # immediate. apply ignores the manual-control flag, so this is
+                  # correct even before the flag is cleared below. turn_on_lights
+                  # handles the room-was-off case; if the room is already on this
+                  # just re-adapts it. This is what stops the room coming on at a
+                  # stale look, without relying on a bare light.turn_on being
+                  # intercepted in time.
                   - action: adaptive_lighting.apply
                     data:
                       entity_id: "{{ adaptive_switch }}"
@@ -272,61 +269,105 @@ actions:
                       turn_on_lights: true
                       transition: "{{ adaptive_transition | float(1) }}"
 
-              - conditions:
-                  - condition: template
-                    value_template: "{{ is_state(mode_helper, 'Rest') }}"
-                sequence:
+                  # Then clear any manual-control flags left by a scene or a
+                  # brightness press so interval adaptation resumes. Turning
+                  # manual control OFF is near-instant, so trailing it here adds
+                  # no visible latency.
                   - action: adaptive_lighting.set_manual_control
                     data:
                       entity_id: "{{ adaptive_switch }}"
                       lights: "{{ [room_light] }}"
-                      manual_control: true
+                      manual_control: false
 
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(mode_helper, 'Rest') }}"
+                sequence:
+                  # Fire the scene first so the light starts changing immediately.
                   - action: scene.turn_on
                     target:
                       entity_id: "{{ rest_scene }}"
+
+                  # Mark the light manually controlled so Adaptive Lighting does
+                  # not adapt over the scene, but ONLY when entering the scene
+                  # system from Adaptive. Once marked, the light stays manual
+                  # through the rest of the cycle, so scene-to-scene presses skip
+                  # this slow call and stay fast. prev_mode is our own instant
+                  # state, so this does not depend on AL's laggy manual_control
+                  # attribute. Turning manual control ON is the slow AL call, and
+                  # it now runs at most once per entry into the scene system.
+                  - if:
+                      - condition: template
+                        value_template: "{{ prev_mode == 'Adaptive' }}"
+                    then:
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: true
 
               - conditions:
                   - condition: template
                     value_template: "{{ is_state(mode_helper, 'Relax') }}"
                 sequence:
-                  - action: adaptive_lighting.set_manual_control
-                    data:
-                      entity_id: "{{ adaptive_switch }}"
-                      lights: "{{ [room_light] }}"
-                      manual_control: true
-
+                  # Fire the scene first so the light starts changing immediately.
                   - action: scene.turn_on
                     target:
                       entity_id: "{{ relax_scene }}"
+
+                  # Only mark manual when entering the scene system from Adaptive
+                  # (see the Rest branch for the full explanation).
+                  - if:
+                      - condition: template
+                        value_template: "{{ prev_mode == 'Adaptive' }}"
+                    then:
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: true
 
               - conditions:
                   - condition: template
                     value_template: "{{ is_state(mode_helper, 'Bright') }}"
                 sequence:
-                  - action: adaptive_lighting.set_manual_control
-                    data:
-                      entity_id: "{{ adaptive_switch }}"
-                      lights: "{{ [room_light] }}"
-                      manual_control: true
-
+                  # Fire the scene first so the light starts changing immediately.
                   - action: scene.turn_on
                     target:
                       entity_id: "{{ bright_scene }}"
+
+                  # Only mark manual when entering the scene system from Adaptive
+                  # (see the Rest branch for the full explanation).
+                  - if:
+                      - condition: template
+                        value_template: "{{ prev_mode == 'Adaptive' }}"
+                    then:
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: true
 
               - conditions:
                   - condition: template
                     value_template: "{{ is_state(mode_helper, 'Concentrate') }}"
                 sequence:
-                  - action: adaptive_lighting.set_manual_control
-                    data:
-                      entity_id: "{{ adaptive_switch }}"
-                      lights: "{{ [room_light] }}"
-                      manual_control: true
-
+                  # Fire the scene first so the light starts changing immediately.
                   - action: scene.turn_on
                     target:
                       entity_id: "{{ concentrate_scene }}"
+
+                  # Only mark manual when entering the scene system from Adaptive
+                  # (see the Rest branch for the full explanation).
+                  - if:
+                      - condition: template
+                        value_template: "{{ prev_mode == 'Adaptive' }}"
+                    then:
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: true
 
       # BRIGHTNESS +/-: Hue performs native dimming. HA immediately ends the
       # scene-cycle window and pauses only brightness adaptation.
