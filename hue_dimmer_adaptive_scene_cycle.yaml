@@ -6,7 +6,7 @@ blueprint:
 
     Leave Brightness Up, Brightness Down, and Off assigned normally in the Hue
     app, but set the On button to Do nothing. Home Assistant then owns the On
-    button and cycles: Adaptive -> Relax -> Rest -> Bright -> Concentrate.
+    button and cycles: Adaptive -> Rest -> Relax -> Bright -> Concentrate.
 
     If more than the selected timeout passes between On-button releases, the
     next press restarts at Adaptive. Brightness buttons end the cycle window and
@@ -16,7 +16,7 @@ blueprint:
 
     Before creating an automation from this blueprint, create one Dropdown helper
     per room with these options in this exact order and capitalization:
-    Adaptive, Rest, Rest, Bright, Concentrate. Also create one Timer helper per room.
+    Adaptive, Rest, Relax, Bright, Concentrate. Also create one Timer helper per room.
 
     Requires Adaptive Lighting with selective brightness/color manual control
     support (Adaptive Lighting 1.30.0 or newer).
@@ -76,11 +76,11 @@ blueprint:
       icon: mdi:palette
       input:
         rest_scene:
-        name: Rest scene
-        selector:
-          entity:
-            filter:
-              - domain: scene
+          name: Rest scene
+          selector:
+            entity:
+              filter:
+                - domain: scene
                 
         relax_scene:
           name: Relax scene
@@ -290,7 +290,7 @@ actions:
 
                       - action: scene.turn_on
                         target:
-                          entity_id: "{{ relax_scene }}"
+                          entity_id: "{{ rest_scene }}"
 
                   - conditions:
                       - condition: template
