@@ -16,7 +16,7 @@ blueprint:
 
     Before creating an automation from this blueprint, create one Dropdown helper
     per room with these options in this exact order and capitalization:
-    Adaptive, Relax, Rest, Bright, Concentrate. Also create one Timer helper per room.
+    Adaptive, Rest, Rest, Bright, Concentrate. Also create one Timer helper per room.
 
     Requires Adaptive Lighting with selective brightness/color manual control
     support (Adaptive Lighting 1.30.0 or newer).
@@ -57,7 +57,7 @@ blueprint:
 
         mode_helper:
           name: Lighting mode Dropdown helper
-          description: Must contain Adaptive, Relax, Rest, Bright, Concentrate in that exact order.
+          description: Must contain Adaptive, Rest, Relax, Bright, Concentrate in that exact order.
           selector:
             entity:
               filter:
@@ -75,15 +75,15 @@ blueprint:
       name: Hue scenes
       icon: mdi:palette
       input:
+        rest_scene:
+        name: Rest scene
+        selector:
+          entity:
+            filter:
+              - domain: scene
+                
         relax_scene:
           name: Relax scene
-          selector:
-            entity:
-              filter:
-                - domain: scene
-
-        rest_scene:
-          name: Rest scene
           selector:
             entity:
               filter:
@@ -141,8 +141,8 @@ variables:
   adaptive_switch: !input adaptive_switch
   mode_helper: !input mode_helper
   cycle_timer: !input cycle_timer
-  relax_scene: !input relax_scene
   rest_scene: !input rest_scene
+  relax_scene: !input relax_scene
   bright_scene: !input bright_scene
   concentrate_scene: !input concentrate_scene
   cycle_timeout: !input cycle_timeout
@@ -280,7 +280,7 @@ actions:
 
                   - conditions:
                       - condition: template
-                        value_template: "{{ is_state(mode_helper, 'Relax') }}"
+                        value_template: "{{ is_state(mode_helper, 'Rest') }}"
                     sequence:
                       - action: adaptive_lighting.set_manual_control
                         data:
@@ -294,7 +294,7 @@ actions:
 
                   - conditions:
                       - condition: template
-                        value_template: "{{ is_state(mode_helper, 'Rest') }}"
+                        value_template: "{{ is_state(mode_helper, 'Relax') }}"
                     sequence:
                       - action: adaptive_lighting.set_manual_control
                         data:
@@ -304,7 +304,7 @@ actions:
 
                       - action: scene.turn_on
                         target:
-                          entity_id: "{{ rest_scene }}"
+                          entity_id: "{{ relax_scene }}"
 
                   - conditions:
                       - condition: template
