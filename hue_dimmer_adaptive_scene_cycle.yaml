@@ -1,0 +1,378 @@
+blueprint:
+  name: Hue Dimmer - Adaptive Lighting + 3-Second Scene Cycle
+  description: >-
+    For Philips Hue Dimmer remotes connected through the official Hue Bridge
+    integration (RWL020/RWL021/RWL022 style button numbering).
+
+    Leave Brightness Up, Brightness Down, and Off assigned normally in the Hue
+    app, but set the On button to Do nothing. Home Assistant then owns the On
+    button and cycles: Adaptive -> Relax -> Rest -> Bright -> Concentrate.
+
+    If more than the selected timeout passes between On-button releases, the
+    next press restarts at Adaptive. Brightness buttons end the cycle window and
+    mark only brightness as manually controlled, allowing Adaptive Lighting to
+    continue adapting color. Off ends the cycle, resets the helper to Adaptive,
+    and clears manual control; the Hue Bridge still performs the actual Off action.
+
+    Before creating an automation from this blueprint, create one Dropdown helper
+    per room with these options in this exact order and capitalization:
+    Adaptive, Relax, Rest, Bright, Concentrate. Also create one Timer helper per room.
+
+    Requires Adaptive Lighting with selective brightness/color manual control
+    support (Adaptive Lighting 1.30.0 or newer).
+  domain: automation
+  author: OpenAI for Ralph
+  homeassistant:
+    min_version: 2024.6.0
+
+  input:
+    required:
+      name: Required room settings
+      icon: mdi:lightbulb-group
+      input:
+        hue_remote:
+          name: Hue Dimmer remote
+          description: Select the Hue Dimmer remote paired to the official Hue Bridge integration.
+          selector:
+            device:
+              filter:
+                - integration: hue
+
+        room_light:
+          name: Hue room or zone light
+          description: Select the grouped Hue room/zone light used by this room's Adaptive Lighting instance.
+          selector:
+            entity:
+              filter:
+                - domain: light
+
+        adaptive_switch:
+          name: Adaptive Lighting instance
+          description: Select the main switch for the corresponding room, such as switch.adaptive_lighting_living_room.
+          selector:
+            entity:
+              filter:
+                - domain: switch
+                  integration: adaptive_lighting
+
+        mode_helper:
+          name: Lighting mode Dropdown helper
+          description: Must contain Adaptive, Relax, Rest, Bright, Concentrate in that exact order.
+          selector:
+            entity:
+              filter:
+                - domain: input_select
+
+        cycle_timer:
+          name: Scene-cycle Timer helper
+          description: A separate Timer helper for this room. Its configured default duration does not matter.
+          selector:
+            entity:
+              filter:
+                - domain: timer
+
+    scenes:
+      name: Hue scenes
+      icon: mdi:palette
+      input:
+        relax_scene:
+          name: Relax scene
+          selector:
+            entity:
+              filter:
+                - domain: scene
+
+        rest_scene:
+          name: Rest scene
+          selector:
+            entity:
+              filter:
+                - domain: scene
+
+        bright_scene:
+          name: Bright scene
+          selector:
+            entity:
+              filter:
+                - domain: scene
+
+        concentrate_scene:
+          name: Concentrate scene
+          selector:
+            entity:
+              filter:
+                - domain: scene
+
+    behavior:
+      name: Timing and transition
+      icon: mdi:timer-cog-outline
+      collapsed: true
+      input:
+        cycle_timeout:
+          name: On-button cycle timeout
+          description: Time allowed between On-button releases before the next press restarts at Adaptive.
+          default: 3
+          selector:
+            number:
+              min: 1
+              max: 10
+              step: 1
+              unit_of_measurement: seconds
+              mode: slider
+
+        adaptive_transition:
+          name: Adaptive transition
+          description: Transition used when entering or returning to Adaptive mode.
+          default: 1
+          selector:
+            number:
+              min: 0
+              max: 10
+              step: 0.5
+              unit_of_measurement: seconds
+              mode: slider
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+variables:
+  room_light: !input room_light
+  adaptive_switch: !input adaptive_switch
+  mode_helper: !input mode_helper
+  cycle_timer: !input cycle_timer
+  relax_scene: !input relax_scene
+  rest_scene: !input rest_scene
+  bright_scene: !input bright_scene
+  concentrate_scene: !input concentrate_scene
+  cycle_timeout: !input cycle_timeout
+  adaptive_transition: !input adaptive_transition
+
+triggers:
+  - trigger: device
+    device_id: !input hue_remote
+    domain: hue
+    type: short_release
+    subtype: 1
+    id: on_short
+
+  - trigger: device
+    device_id: !input hue_remote
+    domain: hue
+    type: short_release
+    subtype: 2
+    id: brightness_up_short
+
+  - trigger: device
+    device_id: !input hue_remote
+    domain: hue
+    type: long_release
+    subtype: 2
+    id: brightness_up_long
+
+  - trigger: device
+    device_id: !input hue_remote
+    domain: hue
+    type: short_release
+    subtype: 3
+    id: brightness_down_short
+
+  - trigger: device
+    device_id: !input hue_remote
+    domain: hue
+    type: long_release
+    subtype: 3
+    id: brightness_down_long
+
+  - trigger: device
+    device_id: !input hue_remote
+    domain: hue
+    type: short_release
+    subtype: 4
+    id: off_short
+
+  - trigger: device
+    device_id: !input hue_remote
+    domain: hue
+    type: long_release
+    subtype: 4
+    id: off_long
+
+conditions: []
+
+actions:
+  - choose:
+      # ON: start at Adaptive, or continue the scene cycle when inside the window.
+      - conditions:
+          - condition: trigger
+            id: on_short
+        sequence:
+          # Capture these states before restarting the timer.
+          - variables:
+              cycle_was_active: "{{ is_state(cycle_timer, 'active') }}"
+              room_was_off: "{{ is_state(room_light, 'off') }}"
+
+          # Starting an active timer restarts its countdown.
+          - action: timer.start
+            target:
+              entity_id: "{{ cycle_timer }}"
+            data:
+              duration: "{{ cycle_timeout | int(3) }}"
+
+          - choose:
+              # First press, timed-out press, or press while the room is off.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ room_was_off or not cycle_was_active }}"
+                sequence:
+                  - action: input_select.select_option
+                    target:
+                      entity_id: "{{ mode_helper }}"
+                    data:
+                      option: Adaptive
+
+                  - action: switch.turn_on
+                    target:
+                      entity_id: "{{ adaptive_switch }}"
+
+                  - action: adaptive_lighting.set_manual_control
+                    data:
+                      entity_id: "{{ adaptive_switch }}"
+                      lights: "{{ [room_light] }}"
+                      manual_control: false
+
+                  - action: adaptive_lighting.apply
+                    data:
+                      entity_id: "{{ adaptive_switch }}"
+                      lights: "{{ [room_light] }}"
+                      transition: "{{ adaptive_transition | float(1) }}"
+                      turn_on_lights: true
+
+            # Another On release inside the timeout: advance one mode.
+            default:
+              - action: input_select.select_next
+                target:
+                  entity_id: "{{ mode_helper }}"
+                data:
+                  cycle: true
+
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_state(mode_helper, 'Adaptive') }}"
+                    sequence:
+                      - action: switch.turn_on
+                        target:
+                          entity_id: "{{ adaptive_switch }}"
+
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: false
+
+                      - action: adaptive_lighting.apply
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          transition: "{{ adaptive_transition | float(1) }}"
+                          turn_on_lights: true
+
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_state(mode_helper, 'Relax') }}"
+                    sequence:
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: true
+
+                      - action: scene.turn_on
+                        target:
+                          entity_id: "{{ relax_scene }}"
+
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_state(mode_helper, 'Rest') }}"
+                    sequence:
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: true
+
+                      - action: scene.turn_on
+                        target:
+                          entity_id: "{{ rest_scene }}"
+
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_state(mode_helper, 'Bright') }}"
+                    sequence:
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: true
+
+                      - action: scene.turn_on
+                        target:
+                          entity_id: "{{ bright_scene }}"
+
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_state(mode_helper, 'Concentrate') }}"
+                    sequence:
+                      - action: adaptive_lighting.set_manual_control
+                        data:
+                          entity_id: "{{ adaptive_switch }}"
+                          lights: "{{ [room_light] }}"
+                          manual_control: true
+
+                      - action: scene.turn_on
+                        target:
+                          entity_id: "{{ concentrate_scene }}"
+
+      # BRIGHTNESS +/-: Hue performs native dimming. HA ends the scene-cycle
+      # window and pauses only Adaptive Lighting brightness adaptation.
+      - conditions:
+          - condition: trigger
+            id:
+              - brightness_up_short
+              - brightness_up_long
+              - brightness_down_short
+              - brightness_down_long
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: "{{ cycle_timer }}"
+
+          - action: adaptive_lighting.set_manual_control
+            data:
+              entity_id: "{{ adaptive_switch }}"
+              lights: "{{ [room_light] }}"
+              manual_control: brightness
+
+      # OFF: Hue performs the native Off action. HA only resets its bookkeeping.
+      - conditions:
+          - condition: trigger
+            id:
+              - off_short
+              - off_long
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: "{{ cycle_timer }}"
+
+          - action: input_select.select_option
+            target:
+              entity_id: "{{ mode_helper }}"
+            data:
+              option: Adaptive
+
+          - action: adaptive_lighting.set_manual_control
+            data:
+              entity_id: "{{ adaptive_switch }}"
+              lights: "{{ [room_light] }}"
+              manual_control: false
