@@ -1,5 +1,5 @@
 blueprint:
-  name: Hue Dimmer - Adaptive Lighting + 3-Second Scene Cycle
+  name: Hue Dimmer - Adaptive Lighting and Scene Cycle
   description: >-
     For Philips Hue Dimmer remotes connected through the official Hue Bridge
     integration (RWL020/RWL021/RWL022 style button numbering).
